@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>空間小數位值積木 (3D Place Value Blocks)</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+
+    <style>
+        /* 全域底層防滾動與手勢干擾設定 */
+        * { box-sizing: border-box; }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f1f5f9;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0; left: 0;
+            z-index: 1;
+        }
+
+        /* UI 圖層 */
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 16px;
+        }
+
+        .interactive {
+            pointer-events: auto;
+        }
+
+        /* 頂部列：控制按鈕與位值總計儀表板 */
+        #top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            width: 100%;
+        }
+
+        #top-left-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        /* 即時數值與位值統計面板 */
+        #stats-board {
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 20px;
+            padding: 12px 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+            border: 1px solid rgba(255,255,255,0.6);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 320px;
+        }
+
+        .total-display {
+            font-size: 24px;
+            font-weight: 800;
+            color: #0f172a;
+            margin-bottom: 6px;
+            letter-spacing: 0.5px;
+        }
+
+        .total-display span {
+            color: #2563eb;
+        }
+
+        .breakdown-row {
+            display: flex;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .badge {
+            padding: 4px 8px;
+            border-radius: 8px;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+        }
+
+        /* 底部工具列 */
+        #bottom-container {
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            position: relative;
+            width: 100%;
+        }
+
+        #toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.88);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 12px;
+            border-radius: 24px;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.12);
+            border: 1px solid rgba(255,255,255,0.8);
+            max-width: 85%;
+        }
+
+        /* 右下角懸浮垃圾桶 */
+        #trash-can {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            width: 72px;
+            height: 72px;
+            background: rgba(239, 68, 68, 0.12);
+            border: 3px dashed #ef4444;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            box-shadow: 0 6px 16px rgba(239, 68, 68, 0.15);
+        }
+
+        #trash-can.drag-over {
+            background: #ef4444;
+            transform: scale(1.2) rotate(-10deg);
+            box-shadow: 0 0 25px rgba(239, 68, 68, 0.5);
+            border: 3px solid #ffffff;
+            color: #fff;
+        }
+
+        /* 按鈕樣式 */
+        button {
+            min-height: 48px;
+            padding: 10px 16px;
+            font-size: 15px;
+            font-weight: 700;
+            color: #ffffff;
+            border: none;
+            border-radius: 14px;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            transition: transform 0.1s, background-color 0.2s, box-shadow 0.2s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }
+        button:active { transform: scale(0.94); }
+
+        /* 色彩配置 */
+        .btn-thousand { background-color: #2980B9; } /* 件：藍色 */
+        .btn-hundred  { background-color: #FF4D4D; } /* 塊：鮮紅 */
+        .btn-ten      { background-color: #3498DB; } /* 條：天藍 */
+        .btn-one      { background-color: #F1C40F; color: #2c3e50; } /* 粒：鮮黃 */
+        .btn-a        { background-color: #9B59B6; } /* A：紫色 */
+        .btn-b        { background-color: #E67E22; } /* B：橙色 */
+        .btn-c        { background-color: #2ECC71; } /* C：鮮綠 */
+
+        .btn-system   { background-color: #64748b; }
+        .btn-view     { background-color: #0f172a; }
+        .btn-split    { background-color: #f97316; }
+        .btn-merge    { background-color: #10b981; animation: pulseGlow 2s infinite; }
+
+        /* AI 導師浮動面板樣式 */
+        #ai-tutor-btn {
+            background: linear-gradient(135deg, #8b5cf6, #6366f1);
+            color: white;
+            box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            animation: floatGlow 3s infinite alternate;
+        }
+
+        @keyframes floatGlow {
+            0% { transform: translateY(0); box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4); }
+            100% { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(139, 92, 246, 0.7); }
+        }
+
+        #ai-panel {
+            position: absolute;
+            top: 75px;
+            right: 16px;
+            width: 360px;
+            max-width: calc(100vw - 32px);
+            max-height: calc(100vh - 180px);
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-radius: 20px;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 100;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        #ai-panel.hidden {
+            opacity: 0;
+            transform: scale(0.9) translateY(-20px);
+            pointer-events: none;
+        }
+
+        .ai-header {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 700;
+        }
+
+        .ai-body {
+            padding: 14px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .ai-action-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+
+        .ai-action-btn {
+            background: #f8fafc;
+            color: #334155;
+            border: 1px solid #e2e8f0;
+            padding: 8px 10px;
+            font-size: 13px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .ai-action-btn:hover {
+            background: #f1f5f9;
+            border-color: #8b5cf6;
+            color: #7c3aed;
+        }
+
+        #ai-response-card {
+            background: #f1f5f9;
+            border-radius: 14px;
+            padding: 12px;
+            border-left: 4px solid #8b5cf6;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #1e293b;
+            min-height: 80px;
+            position: relative;
+            white-space: pre-wrap;
+        }
+
+        .ai-spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 3px solid rgba(139, 92, 246, 0.3);
+            border-radius: 50%;
+            border-top-color: #7c3aed;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .target-goal-banner {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 12px;
+            padding: 8px 12px;
+            font-size: 13px;
+            color: #1e40af;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        @keyframes pulseGlow {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+            70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        /* 響應式調整 */
+        @media (max-width: 768px) {
+            #top-bar { flex-direction: column; align-items: stretch; }
+            #stats-board { width: 100%; min-width: auto; }
+            .breakdown-row { flex-wrap: wrap; justify-content: center; }
+            #toolbar { width: 100%; max-width: 100%; }
+            button { min-height: 44px; padding: 8px 12px; font-size: 13px; }
+            #ai-panel { top: auto; bottom: 100px; right: 12px; width: calc(100vw - 24px); max-height: 50vh; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <div id="top-bar">
+            <div id="top-left-controls" class="interactive">
+                <button class="btn-system" onclick="undoAction()">↩️ 上一步</button>
+                <button class="btn-system" style="background-color: #ef4444;" onclick="resetScene()">🔄 重置</button>
+                <button class="btn-view" id="view-toggle-btn" onclick="toggleView()">👁 45° 視角</button>
+                <button id="ai-tutor-btn" onclick="toggleAIPanel()">🤖 AI 數學小導師</button>
+            </div>
+
+            <!-- 即時數值顯示卡片 -->
+            <div id="stats-board" class="interactive">
+                <div class="total-display">總計：<span id="total-val">0</span></div>
+                <div class="breakdown-row">
+                    <div class="badge btn-thousand">千: <span id="cnt-thousand">0</span></div>
+                    <div class="badge btn-hundred">百: <span id="cnt-hundred">0</span></div>
+                    <div class="badge btn-ten">十: <span id="cnt-ten">0</span></div>
+                    <div class="badge btn-one">個: <span id="cnt-one">0</span></div>
+                    <div class="badge btn-a">0.1: <span id="cnt-A">0</span></div>
+                    <div class="badge btn-b">0.01: <span id="cnt-B">0</span></div>
+                    <div class="badge btn-c">0.001: <span id="cnt-C">0</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI 浮動導師面板 -->
+        <div id="ai-panel" class="interactive hidden">
+            <div class="ai-header">
+                <span>🤖 AI 數學小導師 Gemini</span>
+                <button style="background:transparent; border:none; color:white; font-size:18px; cursor:pointer; padding:2px 8px; min-height:auto;" onclick="toggleAIPanel()">✕</button>
+            </div>
+            <div class="ai-body">
+                <div id="ai-goal-banner" class="target-goal-banner" style="display:none;">
+                    <span>🎯 當前挑戰目標：<strong id="target-goal-val">0</strong></span>
+                    <button style="background:#2563eb; padding:2px 8px; min-height:28px; font-size:12px;" onclick="clearAITargetGoal()">取消目標</button>
+                </div>
+
+                <div class="ai-action-grid">
+                    <button class="ai-action-btn" onclick="generateAIChallenge('easy')">🎯 出題(整數)</button>
+                    <button class="ai-action-btn" onclick="generateAIChallenge('decimal')">🔍 出題(小數)</button>
+                    <button class="ai-action-btn" onclick="verifyBoardWithAI()">✅ 檢查擺放</button>
+                    <button class="ai-action-btn" onclick="analyzeCanvasWithVision()">📸 視覺神探</button>
+                    <button class="ai-action-btn" onclick="generateStoryProblem()" style="grid-column: span 2;">📖 為當前數值出應用題</button>
+                </div>
+
+                <div id="ai-response-card">
+                    你好！我是 Gemini 數學導師。點擊上方按鈕，我可以為你出題、檢查積木或用 3D 視覺看你的桌面喔！
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <button id="tts-btn" class="ai-action-btn" style="background:#8b5cf6; color:white; border:none; width:100%;" onclick="speakAIResponse()">
+                        🔊 語音朗讀解答
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="bottom-container">
+            <div id="toolbar" class="interactive">
+                <button class="btn-thousand" onclick="spawnBlock('thousand')">＋件(千)</button>
+                <button class="btn-hundred" onclick="spawnBlock('hundred')">＋塊(百)</button>
+                <button class="btn-ten" onclick="spawnBlock('ten')">＋條(十)</button>
+                <button class="btn-one" onclick="spawnBlock('one')">＋粒(個)</button>
+                <button class="btn-a" onclick="spawnBlock('A')">＋片A(0.1)</button>
+                <button class="btn-b" onclick="spawnBlock('B')">＋條B(0.01)</button>
+                <button class="btn-c" onclick="spawnBlock('C')">＋粒C(0.001)</button>
+                <button class="btn-merge" onclick="mergeSelectedOrAuto()">🧱 合成(10進位)</button>
+                <button class="btn-split" onclick="splitSelectedBatch()">✂️ 拆解</button>
+            </div>
+
+            <div id="trash-can" class="interactive">🗑️</div>
+        </div>
+    </div>
+
+    <script>
+        // --- 3D 全域變數 ---
+        let scene, camera, renderer, controls;
+        let blocks = []; 
+        let selectedBlocks = []; 
+        let historyStack = [];
+
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+        let dragObject = null;
+        let dragOffset = new THREE.Vector3();
+        let dragStartPositions = new Map();
+        const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        let isTopView = false;
+        let lastTapTime = 0;
+        let pointerDownPos = new THREE.Vector2();
+
+        // --- 規格配置：尺寸、顏色與數值 ---
+        const CONFIG = {
+            thousand: { size: [10, 10, 10],   color: 0x2980B9, defaultY: 5,    val: 1000 },  // 【件】千
+            hundred:  { size: [10, 1, 10],    color: 0xFF4D4D, defaultY: 0.5,  val: 100 },   // 【塊】百
+            ten:      { size: [1, 1, 10],     color: 0x3498DB, defaultY: 0.5,  val: 10 },    // 【條】十
+            one:      { size: [1, 1, 1],      color: 0xF1C40F, defaultY: 0.5,  val: 1 },     // 【粒】個
+            A:        { size: [1, 0.1, 1],    color: 0x9B59B6, defaultY: 0.05, val: 0.1 },   // 【A】0.1
+            B:        { size: [1, 0.1, 0.1],  color: 0xE67E22, defaultY: 0.05, val: 0.01 },  // 【B】0.01
+            C:        { size: [0.1, 0.1, 0.1],color: 0x2ECC71, defaultY: 0.05, val: 0.001 }  // 【C】0.001
+        };
+
+        // 合成順序表 (10個低階單位合成1個高階單位)
+        const MERGE_MAP = {
+            'C': 'B',
+            'B': 'A',
+            'A': 'one',
+            'one': 'ten',
+            'ten': 'hundred',
+            'hundred': 'thousand'
+        };
+
+        // --- Gemini API 狀態與輔助 ---
+        let currentTargetGoal = null;
+        let lastAITextResponse = "你好！我是 Gemini 數學導師。點擊上方按鈕，我可以為你出題、檢查積木或用 3D 視覺看你的桌面喔！";
+        let isAIBusy = false;
+
+        init();
+        animate();
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf1f5f9); 
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 22, 32);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.08;
+            controls.maxPolarAngle = Math.PI / 2 - 0.03; 
+
+            // 燈光設定
+            scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+            const sunLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            sunLight.position.set(25, 40, 20);
+            sunLight.castShadow = true;
+            sunLight.shadow.mapSize.width = 2048;
+            sunLight.shadow.mapSize.height = 2048;
+            scene.add(sunLight);
+
+            // 白色桌面基底
+            const deskMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, metalness: 0 });
+            const desk = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), deskMat);
+            desk.rotation.x = -Math.PI / 2;
+            desk.receiveShadow = true;
+            scene.add(desk);
+
+            // 背景細微網格
+            const gridHelper = new THREE.GridHelper(120, 120, 0xcbd5e1, 0xe2e8f0);
+            gridHelper.position.y = 0.005;
+            scene.add(gridHelper);
+
+            // 事件綁定
+            window.addEventListener('resize', onWindowResize);
+            const canvas = renderer.domElement;
+            canvas.addEventListener('pointerdown', onPointerDown);
+            canvas.addEventListener('pointermove', onPointerMove);
+            canvas.addEventListener('pointerup', onPointerUp);
+            canvas.addEventListener('pointercancel', onPointerUp);
+
+            // 初始投放一粒積木
+            addBlockRaw('one', 0, undefined, 0);
+            updateStats();
+        }
+
+        // --- 純淨正交網格線繪製 ---
+        function createOrthogonalGridLines(w, h, d, type) {
+            const points = [];
+            let step = (type === 'A' || type === 'B' || type === 'C') ? 0.1 : 1;
+            const halfW = w / 2, halfH = h / 2, halfD = d / 2;
+            const epsilon = 0.00005;
+
+            // X 面
+            for (let x = -halfW; x <= halfW + epsilon; x += step) {
+                let cx = Math.max(Math.min(x, halfW), -halfW);
+                points.push(new THREE.Vector3(cx, halfH, -halfD), new THREE.Vector3(cx, halfH, halfD));
+                points.push(new THREE.Vector3(cx, -halfH, -halfD), new THREE.Vector3(cx, -halfH, halfD));
+                points.push(new THREE.Vector3(cx, -halfH, halfD), new THREE.Vector3(cx, halfH, halfD));
+                points.push(new THREE.Vector3(cx, -halfH, -halfD), new THREE.Vector3(cx, halfH, -halfD));
+            }
+            // Y 面
+            for (let y = -halfH; y <= halfH + epsilon; y += step) {
+                let cy = Math.max(Math.min(y, halfH), -halfH);
+                points.push(new THREE.Vector3(-halfW, cy, halfD), new THREE.Vector3(halfW, cy, halfD));
+                points.push(new THREE.Vector3(-halfW, cy, -halfD), new THREE.Vector3(halfW, cy, -halfD));
+                points.push(new THREE.Vector3(-halfW, cy, -halfD), new THREE.Vector3(-halfW, cy, halfD));
+                points.push(new THREE.Vector3(halfW, cy, -halfD), new THREE.Vector3(halfW, cy, halfD));
+            }
+            // Z 面
+            for (let z = -halfD; z <= halfD + epsilon; z += step) {
+                let cz = Math.max(Math.min(z, halfD), -halfD);
+                points.push(new THREE.Vector3(-halfW, halfH, cz), new THREE.Vector3(halfW, halfH, cz));
+                points.push(new THREE.Vector3(-halfW, -halfH, cz), new THREE.Vector3(halfW, -halfH, cz));
+                points.push(new THREE.Vector3(-halfW, -halfH, cz), new THREE.Vector3(-halfW, halfH, cz));
+                points.push(new THREE.Vector3(halfW, -halfH, cz), new THREE.Vector3(halfW, halfH, cz));
+            }
+
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            return new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0x1e293b }));
+        }
+
+        // --- 建構積木 ---
+        function addBlockRaw(type, x, y, z) {
+            const cfg = CONFIG[type];
+            const group = new THREE.Group();
+            
+            const geo = new THREE.BoxGeometry(cfg.size[0], cfg.size[1], cfg.size[2]);
+            // 設定 polygonOffset 避免 Mesh 與 Grid Line 發生 Z-fighting 閃爍
+            const mat = new THREE.MeshStandardMaterial({ 
+                color: cfg.color, roughness: 0.45, metalness: 0,
+                emissive: 0x000000,
+                polygonOffset: true,
+                polygonOffsetFactor: 1,
+                polygonOffsetUnits: 1
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.castShadow = true; mesh.receiveShadow = true;
+
+            const gridLines = createOrthogonalGridLines(cfg.size[0], cfg.size[1], cfg.size[2], type);
+
+            group.add(mesh);
+            group.add(gridLines);
+
+            const targetY = y !== undefined ? y : cfg.defaultY;
+            group.position.set(x, targetY, z);
+            
+            group.userData = { type: type, defaultY: cfg.defaultY, baseMat: mat, preDragPosition: new THREE.Vector3() };
+            mesh.userData.parentGroup = group;
+
+            scene.add(group);
+            blocks.push(group);
+            return group;
+        }
+
+        function spawnBlock(type) {
+            saveHistoryState();
+            const rx = (Math.random() - 0.5) * 8;
+            const rz = (Math.random() - 0.5) * 8;
+            const newBlock = addBlockRaw(type, rx, undefined, rz);
+            
+            // 彈跳登場動畫
+            newBlock.scale.set(0.01, 0.01, 0.01);
+            new TWEEN.Tween(newBlock.scale)
+                .to({ x: 1, y: 1, z: 1 }, 350)
+                .easing(TWEEN.Easing.Back.Out)
+                .start();
+
+            updateStats();
+        }
+
+        // --- 碰撞偵測 ---
+        function checkSceneCollision(targetBlock) {
+            const targetBox = new THREE.Box3().setFromObject(targetBlock.children[0]);
+            for (let i = 0; i < blocks.length; i++) {
+                if (blocks[i] === targetBlock) continue;
+                const otherBox = new THREE.Box3().setFromObject(blocks[i].children[0]);
+                if (targetBox.intersectsBox(otherBox)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // --- 觸控與拖曳互動 ---
+        function onPointerDown(event) {
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            pointerDownPos.set(event.clientX, event.clientY);
+
+            raycaster.setFromCamera(pointer, camera);
+            const intersects = raycaster.intersectObjects(blocks.map(b => b.children[0]));
+
+            if (intersects.length > 0) {
+                const group = intersects[0].object.userData.parentGroup;
+
+                // 雙擊判斷：拆解單一積木
+                const now = Date.now();
+                if (now - lastTapTime < 280 && selectedBlocks.includes(group)) {
+                    saveHistoryState();
+                    executeSplit(group);
+                    lastTapTime = 0;
+                    return;
+                }
+                lastTapTime = now;
+
+                // 若點擊未選中項目，且未按 Shift/多選，預設將其納入選取
+                if (!selectedBlocks.includes(group)) {
+                    selectedBlocks.push(group);
+                    group.children[0].material.emissive.setHex(0x333333);
+                }
+
+                dragObject = group;
+                controls.enabled = false; 
+
+                // 記錄所有選取物件的初始位置，利於多選同步拖曳
+                dragStartPositions.clear();
+                selectedBlocks.forEach(b => {
+                    b.userData.preDragPosition.copy(b.position);
+                    dragStartPositions.set(b, b.position.clone());
+                });
+
+                dragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), group.position);
+                raycaster.ray.intersectPlane(dragPlane, dragOffset);
+                dragOffset.sub(dragObject.position);
+            }
+        }
+
+        function onPointerMove(event) {
+            // 垃圾桶動態視覺
+            const trash = document.getElementById('trash-can');
+            const rect = trash.getBoundingClientRect();
+            if (event.clientX >= rect.left && event.clientX <= rect.right &&
+                event.clientY >= rect.top && event.clientY <= rect.bottom) {
+                if (dragObject) trash.classList.add('drag-over');
+            } else {
+                trash.classList.remove('drag-over');
+            }
+
+            if (!dragObject) return;
+
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(pointer, camera);
+            
+            const intersectPoint = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(dragPlane, intersectPoint)) {
+                const targetPos = intersectPoint.sub(dragOffset);
+                const deltaX = targetPos.x - dragStartPositions.get(dragObject).x;
+                const deltaZ = targetPos.z - dragStartPositions.get(dragObject).z;
+
+                // 同步移動所有選取的積木
+                selectedBlocks.forEach(b => {
+                    const startP = dragStartPositions.get(b);
+                    if (startP) {
+                        b.position.x = startP.x + deltaX;
+                        b.position.z = startP.z + deltaZ;
+                    }
+                });
+            }
+        }
+
+        function onPointerUp(event) {
+            document.getElementById('trash-can').classList.remove('drag-over');
+
+            const distMoved = pointerDownPos.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
+
+            // 如果只是點擊（幾乎沒有移動），切換該項目的選取狀態
+            if (distMoved < 5 && dragObject) {
+                if (event.clientX === pointerDownPos.x && event.clientY === pointerDownPos.y) {
+                    // 點擊原處時點擊切換
+                }
+            }
+
+            if (!dragObject) {
+                // 點擊空白處，取消所有選取
+                if (distMoved < 5) {
+                    clearSelections();
+                }
+                return;
+            }
+
+            // 1. 垃圾桶刪除判定
+            const trash = document.getElementById('trash-can');
+            const rect = trash.getBoundingClientRect();
+            if (event.clientX >= rect.left && event.clientX <= rect.right &&
+                event.clientY >= rect.top && event.clientY <= rect.bottom) {
+                
+                saveHistoryState();
+                const targetsToDelete = [...selectedBlocks];
+                
+                targetsToDelete.forEach(target => {
+                    new TWEEN.Tween(target.scale)
+                        .to({ x: 0.001, y: 0.001, z: 0.001 }, 220)
+                        .easing(TWEEN.Easing.Back.In)
+                        .onComplete(() => {
+                            scene.remove(target);
+                            blocks = blocks.filter(b => b !== target);
+                            selectedBlocks = selectedBlocks.filter(b => b !== target);
+                            updateStats();
+                        })
+                        .start();
+                });
+
+                dragObject = null; controls.enabled = true; return;
+            }
+
+            // 2. 網格吸附 (0.05 步進) 與碰撞處理
+            let isCollided = false;
+            selectedBlocks.forEach(b => {
+                b.position.x = Math.round(b.position.x / 0.05) * 0.05;
+                b.position.z = Math.round(b.position.z / 0.05) * 0.05;
+                b.updateMatrixWorld(true);
+                if (checkSceneCollision(b)) isCollided = true;
+            });
+
+            // 若發生碰撞，退回移動前位置
+            if (isCollided) {
+                selectedBlocks.forEach(b => {
+                    new TWEEN.Tween(b.position)
+                        .to({ x: b.userData.preDragPosition.x, z: b.userData.preDragPosition.z }, 300)
+                        .easing(TWEEN.Easing.Bounce.Out)
+                        .start();
+                });
+            } else {
+                if (dragObject.userData.preDragPosition.distanceTo(dragObject.position) > 0.01) {
+                    pushCustomMoveHistory();
+                }
+            }
+
+            dragObject = null;
+            controls.enabled = true;
+            updateStats();
+        }
+
+        function clearSelections() {
+            selectedBlocks.forEach(b => {
+                if (b.children[0] && b.children[0].material) {
+                    b.children[0].material.emissive.setHex(0x000000);
+                }
+            });
+            selectedBlocks = [];
+        }
+
+        // --- 批量/單獨拆解機制 ---
+        function splitSelectedBatch() {
+            if (selectedBlocks.length === 0) return;
+            saveHistoryState();
+            const batchList = [...selectedBlocks];
+            batchList.forEach(b => executeSplit(b));
+            updateStats();
+        }
+
+        function executeSplit(group) {
+            const type = group.userData.type;
+            const px = group.position.x;
+            const py = group.position.y;
+            const pz = group.position.z;
+
+            scene.remove(group);
+            blocks = blocks.filter(b => b !== group);
+            selectedBlocks = selectedBlocks.filter(b => b !== group);
+
+            let subBlocksArray = [];
+
+            if (type === 'thousand') {
+                const stride = 10 + 0.7; 
+                const startX = px - (4.5 * stride);
+                for(let i = 0; i < 10; i++) {
+                    let child = addBlockRaw('hundred', px, py, pz);
+                    subBlocksArray.push({ obj: child, x: startX + i * stride, y: CONFIG.hundred.defaultY, z: pz });
+                }
+            } 
+            else if (type === 'hundred') {
+                const stride = 1 + 0.5;
+                const startX = px - (4.5 * stride);
+                for(let i = 0; i < 10; i++) {
+                    let child = addBlockRaw('ten', px, py, pz);
+                    subBlocksArray.push({ obj: child, x: startX + i * stride, y: CONFIG.ten.defaultY, z: pz });
+                }
+            } 
+            else if (type === 'ten') {
+                const stride = 1 + 0.3;
+                const startX = px - (4.5 * stride);
+                for(let i = 0; i < 10; i++) {
+                    let child = addBlockRaw('one', px, py, pz);
+                    subBlocksArray.push({ obj: child, x: startX + i * stride, y: CONFIG.one.defaultY, z: pz });
+                }
+            } 
+            else if (type === 'one') {
+                const stride = 0.1 + 0.05;
+                for(let i = 0; i < 10; i++) {
+                    let child = addBlockRaw('A', px, py, pz);
+                    subBlocksArray.push({ obj: child, x: px, y: py + i * stride, z: pz });
+                }
+                focusCameraTween(px, pz, 8);
+            } 
+            else if (type === 'A') {
+                const stride = 0.1 + 0.05;
+                const startZ = pz - (4.5 * stride);
+                for(let i = 0; i < 10; i++) {
+                    let child = addBlockRaw('B', px, py, pz);
+                    subBlocksArray.push({ obj: child, x: px, y: py, z: startZ + i * stride });
+                }
+                focusCameraTween(px, pz, 4);
+            } 
+            else if (type === 'B') {
+                const stride = 0.1 + 0.1;
+                const startX = px - (4.5 * stride);
+                for(let i = 0; i < 10; i++) {
+                    let child = addBlockRaw('C', px, py, pz);
+                    subBlocksArray.push({ obj: child, x: startX + i * stride, y: py, z: pz });
+                }
+                focusCameraTween(px, pz, 2);
+            }
+
+            // 平滑散開動畫
+            subBlocksArray.forEach(item => {
+                new TWEEN.Tween(item.obj.position)
+                    .to({ x: item.x, y: item.y, z: item.z }, 550)
+                    .easing(TWEEN.Easing.Cubic.Out)
+                    .start();
+            });
+        }
+
+        // --- 新增：合成/10進位進位機制 (10小積木 -> 1大積木) ---
+        function mergeSelectedOrAuto() {
+            saveHistoryState();
+            let mergedAny = false;
+
+            // 1. 若有選取，優先嘗試合成選取的 10 個相同類型積木
+            if (selectedBlocks.length >= 10) {
+                const typeCounts = {};
+                selectedBlocks.forEach(b => {
+                    const t = b.userData.type;
+                    typeCounts[t] = (typeCounts[t] || []);
+                    typeCounts[t].push(b);
+                });
+
+                for (let type in typeCounts) {
+                    if (typeCounts[type].length >= 10 && MERGE_MAP[type]) {
+                        executeMerge(typeCounts[type].slice(0, 10), type);
+                        mergedAny = true;
+                        break;
+                    }
+                }
+            }
+
+            // 2. 若無選取或未成功合成，自動對全場景搜尋可合成的 10 個同類積木
+            if (!mergedAny) {
+                const globalCounts = {};
+                blocks.forEach(b => {
+                    const t = b.userData.type;
+                    globalCounts[t] = (globalCounts[t] || []);
+                    globalCounts[t].push(b);
+                });
+
+                // 從最小單位 (C) 開始向上自動合成
+                const typesInOrder = ['C', 'B', 'A', 'one', 'ten', 'hundred'];
+                for (let t of typesInOrder) {
+                    if (globalCounts[t] && globalCounts[t].length >= 10) {
+                        executeMerge(globalCounts[t].slice(0, 10), t);
+                        mergedAny = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!mergedAny) {
+                alert("未滿 10 個可合成的相同單位！請選取或新增至少 10 個相同積木。");
+            } else {
+                updateStats();
+            }
+        }
+
+        function executeMerge(groupOfTen, currentType) {
+            const targetType = MERGE_MAP[currentType];
+            if (!targetType) return;
+
+            // 計算 10 個積木的中心座標
+            let avgX = 0, avgY = 0, avgZ = 0;
+            groupOfTen.forEach(b => {
+                avgX += b.position.x;
+                avgY += b.position.y;
+                avgZ += b.position.z;
+            });
+            avgX /= 10; avgY /= 10; avgZ /= 10;
+
+            // 動畫：10 個積木聚攏至中心後銷毀
+            groupOfTen.forEach(b => {
+                new TWEEN.Tween(b.position)
+                    .to({ x: avgX, y: avgY, z: avgZ }, 350)
+                    .easing(TWEEN.Easing.Quadratic.In)
+                    .onComplete(() => {
+                        scene.remove(b);
+                        blocks = blocks.filter(item => item !== b);
+                        selectedBlocks = selectedBlocks.filter(item => item !== b);
+                    })
+                    .start();
+            });
+
+            // 在中心點生成高階新積木
+            setTimeout(() => {
+                const newBlock = addBlockRaw(targetType, avgX, undefined, avgZ);
+                newBlock.scale.set(0.01, 0.01, 0.01);
+                new TWEEN.Tween(newBlock.scale)
+                    .to({ x: 1, y: 1, z: 1 }, 350)
+                    .easing(TWEEN.Easing.Back.Out)
+                    .start();
+                updateStats();
+            }, 360);
+        }
+
+        // --- 即時數值統計更新 ---
+        function updateStats() {
+            const counts = { thousand: 0, hundred: 0, ten: 0, one: 0, A: 0, B: 0, C: 0 };
+            let total = 0;
+
+            blocks.forEach(b => {
+                const t = b.userData.type;
+                if (counts[t] !== undefined) {
+                    counts[t]++;
+                    total += CONFIG[t].val;
+                }
+            });
+
+            document.getElementById('cnt-thousand').innerText = counts.thousand;
+            document.getElementById('cnt-hundred').innerText = counts.hundred;
+            document.getElementById('cnt-ten').innerText = counts.ten;
+            document.getElementById('cnt-one').innerText = counts.one;
+            document.getElementById('cnt-A').innerText = counts.A;
+            document.getElementById('cnt-B').innerText = counts.B;
+            document.getElementById('cnt-C').innerText = counts.C;
+
+            // 精確處理浮點數加總精度問題
+            const currentTotal = Number(total.toFixed(3));
+            document.getElementById('total-val').innerText = currentTotal;
+
+            // 檢查是否達成目標
+            if (currentTargetGoal !== null && currentTotal === currentTargetGoal) {
+                setAIResponseText(`🎉 太棒了！你完美擺出了目標數值 ${currentTargetGoal}！你的位值概念非常清晰喔！👏`);
+                speakAIResponse();
+                currentTargetGoal = null;
+                document.getElementById('ai-goal-banner').style.display = 'none';
+            }
+        }
+
+        // ==========================================
+        // Gemini API 整合功能 (Gemini 3 Flash & TTS)
+        // ==========================================
+
+        // 通用 Gemini API 呼叫器 (含指數退避機制)
+        async function callGeminiAPI(payload, modelName = "gemini-3-flash-preview") {
+            const apiKey = ""; // API 密鑰由環境動態注入
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+            
+            let delay = 1000;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (response.ok) {
+                        return await response.json();
+                    }
+                } catch (e) {
+                    if (attempt === 2) throw e;
+                }
+                await new Promise(r => setTimeout(r, delay));
+                delay *= 2;
+            }
+            throw new Error("Gemini API 請求失敗");
+        }
+
+        function toggleAIPanel() {
+            const panel = document.getElementById('ai-panel');
+            panel.classList.toggle('hidden');
+        }
+
+        function setAIResponseText(text) {
+            lastAITextResponse = text;
+            document.getElementById('ai-response-card').innerText = text;
+        }
+
+        function setAILoading(loadingText = "Gemini 思考中...") {
+            document.getElementById('ai-response-card').innerHTML = `<div style="display:flex; align-items:center; gap:8px;"><span class="ai-spinner"></span> ${loadingText}</div>`;
+        }
+
+        // 1. AI 智慧出題 (Structured JSON ResponseSchema)
+        async function generateAIChallenge(type) {
+            if (isAIBusy) return;
+            isAIBusy = true;
+            document.getElementById('ai-panel').classList.remove('hidden');
+            setAILoading("AI 正在為你設計有趣題目...");
+
+            const systemPrompt = "你是一位親切的國小數學老師。請設計一道適合位值積木實作的題目。數值範圍：整數題[10-999]，小數題[0.1-99.99]。";
+            const userPrompt = type === 'easy' 
+                ? "請出一道三位數以內的整數位值積木擺放題目。" 
+                : "請出一道帶有小數點（0.1或0.01或0.001）的位值積木擺放題目。";
+
+            const payload = {
+                contents: [{ parts: [{ text: userPrompt }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            targetValue: { type: "NUMBER" },
+                            title: { type: "STRING" },
+                            question: { type: "STRING" },
+                            hint: { type: "STRING" }
+                        },
+                        required: ["targetValue", "title", "question", "hint"]
+                    }
+                }
+            };
+
+            try {
+                const res = await callGeminiAPI(payload, "gemini-3-flash-preview");
+                const jsonText = res?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (jsonText) {
+                    const data = JSON.parse(jsonText);
+                    currentTargetGoal = data.targetValue;
+                    document.getElementById('target-goal-val').innerText = currentTargetGoal;
+                    document.getElementById('ai-goal-banner').style.display = 'flex';
+
+                    const reply = `📌 【${data.title}】\n${data.question}\n\n💡 提示：${data.hint}\n🎯 目標數值：${data.targetValue}`;
+                    setAIResponseText(reply);
+                    speakAIResponse();
+                }
+            } catch (err) {
+                setAIResponseText("出題失敗，請再試一次！");
+            } finally {
+                isAIBusy = false;
+            }
+        }
+
+        function clearAITargetGoal() {
+            currentTargetGoal = null;
+            document.getElementById('ai-goal-banner').style.display = 'none';
+            setAIResponseText("已取消目標！你可以自由操作或請 AI 再次出題。");
+        }
+
+        // 2. AI 自動驗證與進位指導
+        async function verifyBoardWithAI() {
+            if (isAIBusy) return;
+            isAIBusy = true;
+            document.getElementById('ai-panel').classList.remove('hidden');
+            setAILoading("AI 正在分析桌面上的積木...");
+
+            const counts = { thousand: 0, hundred: 0, ten: 0, one: 0, A: 0, B: 0, C: 0 };
+            let total = 0;
+            blocks.forEach(b => {
+                const t = b.userData.type;
+                if (counts[t] !== undefined) {
+                    counts[t]++;
+                    total += CONFIG[t].val;
+                }
+            });
+            total = Number(total.toFixed(3));
+
+            const systemPrompt = "你是一位熱情的數學老師。請根據學生目前的積木數量進行檢視與鼓勵。如果某種積木超過10個，提醒他們可以使用『合成(10進位)』功能！用語簡短鼓勵、淺顯易懂。";
+            const userPrompt = `學生當前桌面狀況：
+- 總數：${total}
+- 千(1000): ${counts.thousand}個
+- 百(100): ${counts.hundred}個
+- 十(10): ${counts.ten}個
+- 個(1): ${counts.one}個
+- 十分之一(0.1): ${counts.A}個
+- 百分之一(0.01): ${counts.B}個
+- 千分之一(0.001): ${counts.C}個
+${currentTargetGoal !== null ? `- 目前目標數值：${currentTargetGoal}` : ''}
+
+請給予診斷與簡短指導。`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userPrompt }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] }
+            };
+
+            try {
+                const res = await callGeminiAPI(payload, "gemini-3-flash-preview");
+                const text = res?.candidates?.[0]?.content?.parts?.[0]?.text || "分析完畢！";
+                setAIResponseText(text);
+                speakAIResponse();
+            } catch (err) {
+                setAIResponseText("驗證失敗，請再試一次。");
+            } finally {
+                isAIBusy = false;
+            }
+        }
+
+        // 3. AI 3D 視覺神探 (Canvas snapshot with Multimodal Vision)
+        async function analyzeCanvasWithVision() {
+            if (isAIBusy) return;
+            isAIBusy = true;
+            document.getElementById('ai-panel').classList.remove('hidden');
+            setAILoading("AI 正在用 3D 眼睛看你的桌面...");
+
+            // 渲染一幀並擷取圖像
+            renderer.render(scene, camera);
+            const dataUrl = renderer.domElement.toDataURL('image/png');
+            const base64Data = dataUrl.split(',')[1];
+
+            const prompt = "這是一個 3D 位值積木教學空間。請觀察這張圖片，描述你看到的積木顏色、大致擺放與空間分佈，並給學生一個親切的讚美或啟發問題！";
+
+            const payload = {
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        { text: prompt },
+                        { inlineData: { mimeType: 'image/png', data: base64Data } }
+                    ]
+                }]
+            };
+
+            try {
+                const res = await callGeminiAPI(payload, "gemini-3-flash-preview");
+                const text = res?.candidates?.[0]?.content?.parts?.[0]?.text || "看到你的精彩桌面囉！";
+                setAIResponseText("👀 【AI 視覺觀察】\n" + text);
+                speakAIResponse();
+            } catch (err) {
+                setAIResponseText("視覺分析失敗，請重試。");
+            } finally {
+                isAIBusy = false;
+            }
+        }
+
+        // 4. 生成生活數學故事
+        async function generateStoryProblem() {
+            if (isAIBusy) return;
+            isAIBusy = true;
+            document.getElementById('ai-panel').classList.remove('hidden');
+            setAILoading("AI 正在編寫生活故事題目...");
+
+            let total = 0;
+            blocks.forEach(b => { total += CONFIG[b.userData.type].val; });
+            total = Number(total.toFixed(3));
+
+            if (total === 0) {
+                setAIResponseText("桌面上還沒有積木喔！請先擺放一些積木再生成故事吧！");
+                isAIBusy = false;
+                return;
+            }
+
+            const prompt = `請以數字 ${total} 為答案，編寫一個有趣活潑的國小生活數學應用題（例如購物、分水果、積木遊戲等），並附上解答說明。`;
+
+            const payload = { contents: [{ parts: [{ text: prompt }] }] };
+
+            try {
+                const res = await callGeminiAPI(payload, "gemini-3-flash-preview");
+                const text = res?.candidates?.[0]?.content?.parts?.[0]?.text || "故事生成完畢！";
+                setAIResponseText(`📖 【位值生活故事】\n${text}`);
+                speakAIResponse();
+            } catch (err) {
+                setAIResponseText("生成故事失敗，請稍後再試。");
+            } finally {
+                isAIBusy = false;
+            }
+        }
+
+        // 5. Gemini 語音朗讀 (gemini-2.5-flash-preview-tts + PCM16 轉 WAV)
+        async function speakAIResponse() {
+            if (!lastAITextResponse || lastAITextResponse.trim() === '') return;
+
+            const btn = document.getElementById('tts-btn');
+            const originalText = btn.innerText;
+            btn.innerText = "🔊 語音合成中...";
+
+            // 清理文字標題與符號以改善發音
+            const cleanText = lastAITextResponse.replace(/[📌💡🎯👀📖【】]/g, '');
+
+            const payload = {
+                contents: [{ parts: [{ text: `請用親切熱情的語調朗讀：${cleanText}` }] }],
+                generationConfig: {
+                    responseModalities: ["AUDIO"],
+                    speechConfig: {
+                        voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } }
+                    }
+                }
+            };
+
+            try {
+                const res = await callGeminiAPI(payload, "gemini-2.5-flash-preview-tts");
+                const part = res?.candidates?.[0]?.content?.parts?.[0];
+                const audioData = part?.inlineData?.data;
+                const mimeType = part?.inlineData?.mimeType;
+
+                if (audioData) {
+                    const sampleRateMatch = mimeType ? mimeType.match(/rate=(\d+)/) : null;
+                    const sampleRate = sampleRateMatch ? parseInt(sampleRateMatch[1], 10) : 24000;
+                    
+                    const pcmBuffer = base64ToArrayBuffer(audioData);
+                    const pcm16 = new Int16Array(pcmBuffer);
+                    const wavBlob = pcmToWav(pcm16, sampleRate);
+                    const audioUrl = URL.createObjectURL(wavBlob);
+
+                    const audio = new Audio(audioUrl);
+                    audio.play();
+                }
+            } catch (e) {
+                console.error("TTS 朗讀失敗", e);
+            } finally {
+                btn.innerText = originalText;
+            }
+        }
+
+        // PCM16 與 WAV 轉檔工具
+        function base64ToArrayBuffer(base64) {
+            const binaryString = window.atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function pcmToWav(pcm16, sampleRate) {
+            const buffer = new ArrayBuffer(44 + pcm16.length * 2);
+            const view = new DataView(buffer);
+            
+            function writeString(offset, string) {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            }
+            
+            writeString(0, 'RIFF');
+            view.setUint32(4, 36 + pcm16.length * 2, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeString(36, 'data');
+            view.setUint32(40, pcm16.length * 2, true);
+            
+            let offset = 44;
+            for (let i = 0; i < pcm16.length; i++, offset += 2) {
+                view.setInt16(offset, pcm16[i], true);
+            }
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+        // --- 歷史紀錄 (Undo) 系統 ---
+        function saveHistoryState() {
+            const stateSnapshot = blocks.map(b => ({ type: b.userData.type, x: b.position.x, y: b.position.y, z: b.position.z }));
+            historyStack.push(stateSnapshot);
+            if (historyStack.length > 30) historyStack.shift();
+        }
+
+        function pushCustomMoveHistory() {
+            const stateSnapshot = blocks.map(b => ({ type: b.userData.type, x: b.position.x, y: b.position.y, z: b.position.z }));
+            historyStack.push(stateSnapshot);
+        }
+
+        function undoAction() {
+            if (historyStack.length === 0) return;
+            const lastState = historyStack.pop();
+            
+            blocks.forEach(b => scene.remove(b));
+            blocks = []; clearSelections();
+            
+            lastState.forEach(s => addBlockRaw(s.type, s.x, s.y, s.z));
+            updateStats();
+        }
+
+        function resetScene() {
+            historyStack = [];
+            blocks.forEach(b => scene.remove(b));
+            blocks = []; clearSelections();
+            
+            isTopView = false;
+            document.getElementById('view-toggle-btn').innerText = '👁 45° 視角';
+            new TWEEN.Tween(camera.position).to({ x: 0, y: 22, z: 32 }, 600).start();
+            new TWEEN.Tween(controls.target).to({ x: 0, y: 0, z: 0 }, 600).start();
+            
+            addBlockRaw('one', 0, undefined, 0); 
+            updateStats();
+        }
+
+        // --- 視角切換與輔助動畫 ---
+        function focusCameraTween(x, z, viewDistance) {
+            new TWEEN.Tween(camera.position)
+                .to({ x: x + viewDistance * 0.4, y: viewDistance, z: z + viewDistance }, 700)
+                .easing(TWEEN.Easing.Cubic.Out).start();
+            new TWEEN.Tween(controls.target)
+                .to({ x: x, y: 0, z: z }, 700)
+                .easing(TWEEN.Easing.Cubic.Out).start();
+        }
+
+        function toggleView() {
+            isTopView = !isTopView;
+            const btn = document.getElementById('view-toggle-btn');
+            const targetPos = isTopView ? { x: 0.001, y: 48, z: 0.001 } : { x: 0, y: 22, z: 32 };
+            btn.innerText = isTopView ? '👁 鳥瞰俯視角' : '👁 45° 視角';
+
+            new TWEEN.Tween(camera.position).to(targetPos, 750).easing(TWEEN.Easing.Quadratic.InOut).start();
+            new TWEEN.Tween(controls.target).to({ x: 0, y: 0, z: 0 }, 750).easing(TWEEN.Easing.Quadratic.InOut).start();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            TWEEN.update(time);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
